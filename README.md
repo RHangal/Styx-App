@@ -36,4 +36,4 @@ This application is setup to use CosmosDB (NoSQL) and BlobStorage in order to st
 
 ## Authentication
 
-Auth0 is used to authenticate users when signing up and logging into the application. Create/Sign into your Auth0 account and create an SPA App along with an API in order to obtain the values for the Auth0 Domain and Auth0 Audience environment variables..
+Auth0 is used to authenticate users when signing up and logging into the application. Create/Sign into your Auth0 account and create an SPA App along with an API in order to obtain the values for the Auth0 Domain and Auth0 Audience environment variables.
