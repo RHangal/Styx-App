@@ -1,0 +1,223 @@
+<div class="forms-container">
+  <h2>Create a New Post</h2>
+  <form (ngSubmit)="onSubmit()" #postForm="ngForm" class="create-post-form">
+    <!-- Caption Input -->
+    <div class="form-group">
+      <label for="caption">Caption:</label>
+      <textarea
+        id="caption"
+        name="caption"
+        [(ngModel)]="formData.caption"
+        required
+        placeholder="Write your caption here..."
+      ></textarea>
+    </div>
+
+    <!-- File Input -->
+    <div class="form-group">
+      <label for="media">Media (optional):</label>
+      <input
+        type="file"
+        id="media"
+        (change)="onFileSelected($event)"
+        accept="image/*,video/*"
+      />
+    </div>
+
+    <div *ngIf="isLoading" class="loading-overlay">
+      <div class="spinner"></div>
+      <p>Creating post...</p>
+    </div>
+
+    <!-- Submit Button -->
+    <button type="submit" [disabled]="!postForm.form.valid || isLoading">
+      Post
+    </button>
+  </form>
+</div>
+
+<!-- Error Message -->
+<div *ngIf="error" class="error-message">
+  {{ error }}
+</div>
+
+<div *ngIf="!error && posts.length === 0" class="no-posts-message">
+  No posts found for this category.
+</div>
+
+<div class="posts-container">
+  <div *ngFor="let post of posts" class="post-card">
+    <!-- Hidden fields for each post -->
+    <input type="hidden" id="postAuth0UserId" [value]="post.auth0UserId" />
+    <input type="hidden" id="postEmail" [value]="post.Email" />
+    <input type="hidden" id="postId" [value]="post.id" />
+
+    <!-- Delete Button (Only visible if auth0UserId matches post's auth0UserId) -->
+    <button
+      *ngIf="auth0UserId === post.auth0UserId"
+      class="delete-button"
+      (click)="deletePost(post.id)"
+    >
+      Delete Post
+    </button>
+    <!-- Post Details -->
+    <h2>{{ post.Caption | titlecase }}</h2>
+    <p><strong>Author:</strong> {{ post.Name }}</p>
+    <p><strong>Created At:</strong> {{ post.CreatedAt | date : "short" }}</p>
+    <div *ngIf="post.MediaUrl">
+      <!-- Check if the media URL is an image -->
+      <ng-container *ngIf="isImage(post.MediaUrl); else videoTemplate">
+        <img [src]="post.MediaUrl" alt="Post Media" class="post-media" />
+      </ng-container>
+      <!-- Video fallback -->
+      <ng-template #videoTemplate>
+        <video
+          [src]="post.MediaUrl"
+          controls
+          style="max-width: 50%; height: auto; display: block; margin: 0 auto"
+        ></video>
+      </ng-template>
+    </div>
+    <p><strong>Likes:</strong> {{ post.LikesCount }}</p>
+    <!-- Like Button for Post -->
+    <button (click)="onToggleLike(post.id)">Like</button>
+
+    <!-- Comment Button -->
+    <button (click)="toggleCommentForm(post.id)">
+      {{ commentingOnPostId === post.id ? "Cancel" : "Comment" }}
+    </button>
+
+    <!-- Comment Form -->
+    <div *ngIf="commentingOnPostId === post.id" class="comment-form">
+      <textarea
+        [(ngModel)]="commentText"
+        placeholder="Write your comment here..."
+      ></textarea>
+      <button (click)="addComment(post.id, post.Email)">Submit Comment</button>
+    </div>
+
+    <!-- Comments Section -->
+    <div *ngIf="post.Comments.length > 0" class="comments-section">
+      <h3>Comments ({{ post.Comments.length }})</h3>
+      <ul>
+        <li *ngFor="let comment of post.Comments">
+          <!-- Hidden fields for each comment -->
+          <input
+            type="hidden"
+            id="commentAuth0UserId"
+            [value]="comment.auth0UserId"
+          />
+          <input type="hidden" id="commentEmail" [value]="comment.Email" />
+          <input type="hidden" id="commentId" [value]="comment.CommentId" />
+
+          <p>{{ comment.Text }}</p>
+          <p><strong>Commenter:</strong> {{ comment.Name }}</p>
+          <p>
+            <strong>Created At:</strong>
+            {{ comment.CreatedAt | date : "short" }}
+          </p>
+          <p><strong>Likes:</strong> {{ comment.LikesCount }}</p>
+          <!-- Like Button for Comment -->
+          <button (click)="onToggleLike(post.id, comment.CommentId)">
+            Like
+          </button>
+
+          <!-- Reply Button -->
+          <button (click)="toggleReplyForm(comment.CommentId)">
+            {{ replyingToCommentId === comment.CommentId ? "Cancel" : "Reply" }}
+          </button>
+
+          <!-- Reply Form -->
+          <div
+            *ngIf="replyingToCommentId === comment.CommentId"
+            class="reply-form"
+          >
+            <textarea
+              [(ngModel)]="replyText"
+              placeholder="Write your reply here..."
+            ></textarea>
+            <button
+              (click)="addComment(post.id, post.Email, comment.CommentId)"
+            >
+              Submit Reply
+            </button>
+          </div>
+
+          <!-- Edit Button for Comment (Only visible if auth0UserId matches) -->
+          <button
+            *ngIf="auth0UserId === comment.auth0UserId"
+            class="edit-button"
+            (click)="editComment(post.id, comment.CommentId)"
+          >
+            Edit Comment
+          </button>
+
+          <!-- Delete Button for Comment (Only visible if auth0UserId matches) -->
+          <button
+            *ngIf="auth0UserId === comment.auth0UserId"
+            class="delete-button"
+            (click)="confirmDeleteComment(post.id, comment.CommentId)"
+          >
+            Delete Comment
+          </button>
+          <!-- Replies Section -->
+          <div *ngIf="comment.Replies.length > 0" class="replies-section">
+            <h4>Replies ({{ comment.Replies.length }})</h4>
+            <ul>
+              <li *ngFor="let reply of comment.Replies">
+                <!-- Hidden fields for replies -->
+                <input
+                  type="hidden"
+                  id="replyAuth0UserId"
+                  [value]="reply.auth0UserId"
+                />
+                <input type="hidden" id="replyEmail" [value]="reply.Email" />
+                <input type="hidden" id="replyId" [value]="reply.CommentId" />
+
+                <p>{{ reply.Text }}</p>
+                <p><strong>Replier:</strong> {{ reply.Name }}</p>
+                <p>
+                  <strong>Created At:</strong>
+                  {{ reply.CreatedAt | date : "short" }}
+                </p>
+                <p><strong>Likes:</strong> {{ reply.LikesCount }}</p>
+                <!-- Like Button for Comment -->
+                <button
+                  (click)="
+                    onToggleLike(post.id, comment.CommentId, reply.CommentId)
+                  "
+                >
+                  Like
+                </button>
+                <!-- Edit Button for Reply (Only visible if auth0UserId matches) -->
+                <button
+                  *ngIf="auth0UserId === reply.auth0UserId"
+                  class="edit-button"
+                  (click)="
+                    editComment(post.id, comment.CommentId, reply.CommentId)
+                  "
+                >
+                  Edit Reply
+                </button>
+                <!-- Delete Button for Reply (Only visible if auth0UserId matches) -->
+                <button
+                  *ngIf="auth0UserId === reply.auth0UserId"
+                  class="delete-button"
+                  (click)="
+                    confirmDeleteReply(
+                      post.id,
+                      comment.CommentId,
+                      reply.CommentId
+                    )
+                  "
+                >
+                  Delete Reply
+                </button>
+              </li>
+            </ul>
+          </div>
+        </li>
+      </ul>
+    </div>
+  </div>
+</div>

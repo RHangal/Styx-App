@@ -1,0 +1,17 @@
+<div class="category-container">
+  <div
+    class="category-card"
+    *ngFor="let category of categories"
+    (click)="navigateToPosts(category.PostType)"
+  >
+    <img
+      [src]="category.MediaUrl"
+      [alt]="category.Title"
+      class="category-image"
+    />
+    <div class="category-content">
+      <h3>{{ category.Title }}</h3>
+      <p>{{ category.Caption }}</p>
+    </div>
+  </div>
+</div>

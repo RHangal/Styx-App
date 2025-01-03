@@ -1,0 +1,40 @@
+<nav class="navbar">
+  <div class="navbar-logo">
+    <a routerLink="/" class="logo">Styx</a>
+  </div>
+  <ul class="navbar-links">
+    <li>
+      <a routerLink="/profile" class="nav-link">
+        <!-- Show profile photo if it exists, otherwise show 'Profile' text -->
+        <img
+          *ngIf="profilePhotoUrl; else profileText"
+          [src]="profilePhotoUrl"
+          alt="Profile"
+          class="profile-photo"
+        />
+        <ng-template #profileText>Profile</ng-template>
+      </a>
+    </li>
+    <li>
+      <a routerLink="/shop" class="nav-link">Shop</a>
+    </li>
+    <li>
+      <ng-container *ngIf="auth.isAuthenticated$ | async; else loggedOut">
+        <a class="nav-link" href="#" (click)="logout()">Log out</a>
+      </ng-container>
+
+      <ng-template #loggedOut>
+        <a
+          class="nav-link"
+          href="#"
+          (click)="
+            auth.loginWithRedirect({
+              appState: { target: '/profile' }
+            })
+          "
+          >Log in</a
+        >
+      </ng-template>
+    </li>
+  </ul>
+</nav>

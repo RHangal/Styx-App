@@ -1,0 +1,46 @@
+<div class="shop-container">
+  <h1>Badge Shop</h1>
+
+  <div *ngIf="loading" class="loading">Loading...</div>
+  <div class="userCoins">River Coins: {{ userCoins }}</div>
+
+  <button class="toggle-button" (click)="toggleTopUp()">
+    {{ isTopUp ? "Back to Shop" : "Top-Up" }}
+  </button>
+
+  <div *ngIf="!isTopUp">
+    <div
+      class="badges-container"
+      *ngIf="badges && badges.length > 0 && !loading; else noBadges"
+    >
+      <div class="badge-group" *ngFor="let badgeGroup of badges">
+        <div class="badge-card" *ngFor="let imageUrl of badgeGroup.imageUrls">
+          <div class="badge-card-image">
+            <img [src]="imageUrl" alt="Badge Image" />
+            <div class="badge-hover-content">
+              <p>Price: {{ badgeGroup.value }} coins</p>
+              <button
+                class="badge-purchase-button"
+                (click)="purchaseBadge(badgeGroup.value, imageUrl)"
+              >
+                Purchase
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <ng-template #noBadges>
+      <p *ngIf="!loading">No badges available.</p>
+      <p *ngIf="loading">Loading badges...</p>
+    </ng-template>
+  </div>
+
+  <div class="top-up-container" *ngIf="isTopUp">
+    <div class="top-up-card" *ngFor="let option of topUpOptions">
+      <h3>{{ option.amount }} Coins</h3>
+      <p>${{ option.price }}</p>
+      <button>Buy</button>
+    </div>
+  </div>
+</div>

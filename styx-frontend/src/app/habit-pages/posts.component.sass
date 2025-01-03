@@ -1,0 +1,174 @@
+.forms-container
+  display: flex
+  justify-content: center
+  align-items: center
+  flex-direction: column
+  width: 100%
+  margin: 2rem auto
+  padding: 1rem
+  text-align: center // Align all text in the center
+
+.create-post-form
+  background-color: #f9f9f9
+  border: 1px solid #ddd
+  border-radius: 8px
+  padding: 2rem
+  width: 100%
+  max-width: 600px
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1)
+
+  h2
+    text-align: center
+    margin-bottom: 1.5rem
+
+  .form-group
+    margin-bottom: 1.5rem
+    display: flex
+    flex-direction: column
+    align-items: center // Align labels and inputs to the center
+
+    label
+      font-weight: bold
+      margin-bottom: 0.5rem
+
+  input,
+  select,
+  textarea,
+  button
+    width: 100%
+    max-width: 500px
+    padding: 0.8rem
+    margin: 0.2rem 0
+    border: 1px solid #ddd
+    border-radius: 4px
+    font-size: 1rem
+
+  textarea
+    resize: none // Prevent resizing for consistency
+
+  button
+    background-color: #007bff
+    color: white
+    border: none
+    cursor: pointer
+    font-size: 1.1rem
+    font-weight: bold
+
+    &:disabled
+      background-color: #ccc
+
+    &:hover:not(:disabled)
+      background-color: #0056b3
+
+/* posts.component.css */
+
+.loading-overlay
+  position: fixed
+  top: 0
+  left: 0
+  right: 0
+  bottom: 0
+  background: rgba(0, 0, 0, 0.5) /* Semi-transparent background */
+  display: flex
+  justify-content: center
+  align-items: center
+  z-index: 9999 /* Make sure it's on top of other content */
+
+.spinner
+  border: 4px solid #f3f3f3 /* Light gray border */
+  border-top: 4px solid #3498db /* Blue color for the top */
+  border-radius: 50%
+  width: 50px
+  height: 50px
+  animation: spin 2s linear infinite /* Spinning animation */
+
+@keyframes spin
+  0%
+    transform: rotate(0deg)
+  100%
+    transform: rotate(360deg)
+
+button:disabled
+  background-color: #ccc /* Change button style when disabled */
+  cursor: not-allowed
+
+
+.posts-container
+  margin: 20px auto
+  max-width: 600px
+  
+
+.post-card
+  border: 1px solid #ccc
+  padding: 15px
+  margin-bottom: 20px
+  border-radius: 8px
+  background-color: #f9f9f9
+
+.post-media 
+  max-width: 100%
+  display: block
+  margin: 10px auto
+  border: 1px solid #ccc /* Optional: Add a border for better visibility */
+  border-radius: 8px /* Optional: Add rounded corners */
+
+
+.post-media img 
+  height: auto /* Default for images */
+
+
+
+
+
+
+.delete-button 
+  background-color: #ff4d4d
+  color: white
+  border: none
+  padding: 10px 15px
+  cursor: pointer
+  border-radius: 4px
+
+
+.delete-button:hover 
+  background-color: #e60000
+  
+
+.comments-section 
+  margin-top: 15px
+  border-top: 1px solid #ddd
+  padding-top: 10px
+
+  p 
+    font-size: 1.1rem // Default text size in comments
+    line-height: 1.5  // Improved readability
+  
+
+  .comment-text 
+    font-size: 1.2rem // Larger text size for comments
+    font-weight: bold // Optional for emphasis
+  
+
+  .replies-section 
+    margin-top: 10px
+    border-left: 2px solid #ddd
+    padding-left: 10px
+    font-size: 1rem // Larger reply size
+    line-height: 1.4 // Maintain consistency
+    color: #555
+
+    .reply-text 
+      font-size: 1.1rem // Slightly smaller than comments
+      font-weight: normal // Keep replies visually distinct
+    
+  
+
+
+.error-message
+  color: red
+  font-weight: bold
+
+.no-posts-message
+  text-align: center
+  color: #555
+  font-size: 1.2em

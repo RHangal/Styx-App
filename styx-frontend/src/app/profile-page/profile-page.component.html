@@ -1,0 +1,84 @@
+<!-- Navigation Buttons for Profile and Badges -->
+<div class="tabs">
+  <button (click)="showProfile()">Profile</button>
+  <button (click)="showBadges()">Badges</button>
+</div>
+<!-- profile-page.component.html -->
+<div *ngIf="showingProfile">
+  <div class="profile-container">
+    <!-- Profile Photo -->
+    <div class="profile-photo" (click)="togglePhotoEdit()">
+      <img [src]="profile.PhotoUrl" alt="Profile Photo" />
+    </div>
+
+    <!-- Conditional File Upload Form -->
+    <div *ngIf="isEditingPhoto" class="photo-upload-form">
+      <input type="file" (change)="onFileSelected($event)" />
+      <button (click)="uploadProfilePhoto()" [disabled]="isLoading">
+        Upload
+      </button>
+    </div>
+
+    <div *ngIf="isLoading" class="loading-overlay">
+      <div class="spinner"></div>
+      <p>Uploading photo...</p>
+    </div>
+
+    <h2>User Profile</h2>
+
+    <div *ngIf="!isEditing; else editForm">
+      <p><strong>Name:</strong> {{ profile.Name }}</p>
+      <p><strong>About Me:</strong> {{ profile.AboutMe }}</p>
+      <p><strong>Habits:</strong> {{ profile.Habits }}</p>
+      <p><strong>River Coins:</strong> {{ profile.Coins }}</p>
+      <button (click)="toggleEdit()">Edit</button>
+    </div>
+
+    <ng-template #editForm>
+      <form (ngSubmit)="saveProfile()">
+        <label for="name">Name:</label>
+        <input
+          type="text"
+          id="name"
+          [(ngModel)]="profile.Name"
+          name="name"
+          required
+          minlength="2"
+          #name="ngModel"
+        />
+        <div *ngIf="name.invalid && name.touched">
+          <small *ngIf="name.errors?.['required']">Name is required.</small>
+          <small *ngIf="name.errors?.['minlength']"
+            >Name must be at least 2 characters.</small
+          >
+        </div>
+
+        <label for="aboutMe">About Me:</label>
+        <textarea
+          id="aboutMe"
+          [(ngModel)]="profile.AboutMe"
+          name="aboutMe"
+        ></textarea>
+
+        <label for="habits">Habits:</label>
+        <textarea
+          id="habits"
+          [(ngModel)]="profile.Habits"
+          name="habits"
+        ></textarea>
+
+        <button type="button" (click)="toggleEdit()">Cancel</button>
+        <button type="submit">Save</button>
+      </form>
+    </ng-template>
+  </div>
+</div>
+<!-- Display Badges Information -->
+<div *ngIf="!showingProfile">
+  <h2>Your Badges</h2>
+  <div class="badges-container">
+    <div *ngFor="let badgeUrl of profile.Badges" class="badge-card">
+      <img [src]="badgeUrl" alt="Badge" />
+    </div>
+  </div>
+</div>

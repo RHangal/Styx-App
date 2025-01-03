@@ -1,0 +1,201 @@
+.tabs
+  display: flex
+  justify-content: center
+  gap: 20px
+  margin-bottom: 20px
+
+button
+  padding: 10px 20px
+  font-size: 1rem
+  border: 1px solid #ddd
+  border-radius: 8px
+  background-color: #f8f9fa
+  cursor: pointer
+  transition: background-color 0.3s ease
+
+  &:hover
+    background-color: #e2e6ea
+
+  &:focus
+    outline: none
+    border-color: #007bff
+    box-shadow: 0 0 0 0.2rem rgba(38, 143, 255, 0.25)
+
+.profile-container
+  max-width: 600px
+  margin: 0 auto
+  padding: 20px
+  background-color: #ffffff
+  border-radius: 10px
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1)
+  display: flex
+  flex-direction: column
+  align-items: center
+
+.profile-photo
+  width: 150px
+  height: 150px
+  border-radius: 50%
+  overflow: hidden
+  margin-bottom: 20px
+  cursor: pointer /* Change mouse cursor to pointer when hovering */
+
+  img
+    width: 100%
+    height: 100%
+    object-fit: cover
+    border-radius: 50%
+
+.profile-upload
+  display: flex
+  flex-direction: column
+  align-items: center
+  gap: 10px
+
+.upload-label
+  font-weight: bold
+  margin-bottom: 5px
+
+button
+  padding: 10px 20px
+  font-size: 1rem
+  background-color: #007bff
+  color: #ffffff
+  border: none
+  border-radius: 5px
+  cursor: pointer
+  transition: background-color 0.3s ease
+  &:hover
+    background-color: #0056b3
+
+.loading-overlay
+  position: fixed
+  top: 0
+  left: 0
+  right: 0
+  bottom: 0
+  background: rgba(0, 0, 0, 0.5) /* Semi-transparent background */
+  display: flex
+  justify-content: center
+  align-items: center
+  z-index: 9999 /* Make sure it's on top of other content */
+
+.spinner
+  border: 4px solid #f3f3f3 /* Light gray border */
+  border-top: 4px solid #3498db /* Blue color for the top */
+  border-radius: 50%
+  width: 50px
+  height: 50px
+  animation: spin 2s linear infinite /* Spinning animation */
+
+@keyframes spin
+  0%
+    transform: rotate(0deg)
+  100%
+    transform: rotate(360deg)
+    
+button:disabled
+  background-color: #ccc /* Change button style when disabled */
+  cursor: not-allowed
+
+.profile-container
+  max-width: 600px
+  margin: 0 auto
+  padding: 20px
+  background-color: #ffffff
+  border-radius: 10px
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1)
+  display: flex
+  flex-direction: column
+  align-items: center
+  font-size: 1.5rem
+
+.profile-header
+  width: 100%
+  text-align: center
+  margin-bottom: 20px
+  font-size: 1.5rem
+  font-weight: bold
+
+.profile-info
+  width: 100%
+  margin-bottom: 20px
+  padding: 15px
+  background-color: #f9f9f9
+  border-radius: 8px
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1)
+  display: flex
+  flex-direction: column
+  gap: 10px
+  font-size: 1rem
+
+.profile-info-item
+  display: flex
+  justify-content: space-between
+  align-items: center
+  padding: 10px
+  background-color: #ffffff
+  border-radius: 6px
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05)
+  
+
+button
+  margin-top: 10px
+  padding: 10px 20px
+  background-color: #007bff
+  color: #ffffff
+  border: none
+  border-radius: 5px
+  cursor: pointer
+  transition: background-color 0.3s ease
+  &:hover
+    background-color: #0056b3
+
+form
+  display: flex
+  flex-direction: column
+  gap: 15px
+  width: 100%
+
+form > input, textarea
+  padding: 10px
+  border: 1px solid #ccc
+  border-radius: 5px
+  font-size: 1rem
+
+form > label
+  font-weight: bold
+  margin-bottom: 5px
+
+.badges-container
+  display: flex
+  flex-wrap: wrap
+  justify-content: center
+  gap: 20px
+
+.badge-card
+  display: inline-block
+  border: 1px solid #ddd
+  border-radius: 8px
+  margin: 10px
+  padding: 10px
+  text-align: center
+  width: 150px
+  transition: transform 0.3s ease, box-shadow 0.3s ease
+  overflow: hidden
+  position: relative
+  display: flex
+  justify-content: center
+  align-items: center
+
+  &:hover
+    transform: translateY(-5px)
+    box-shadow: 0 8px 12px rgba(0, 0, 0, 0.15)
+
+  img
+    max-width: 100%
+    height: auto
+    display: block
+    border-radius: 8px
+    object-fit: contain
+
