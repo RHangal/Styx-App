@@ -1,5 +1,5 @@
 {
-  "name": "auth-test",
+  "name": "styx-frontend",
   "version": "0.0.0",
   "scripts": {
     "ng": "ng",
