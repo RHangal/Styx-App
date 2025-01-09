@@ -26,10 +26,10 @@ export const routes: Routes = [
     component: ProfilePageComponent,
     // canActivate: [AuthGuard], // Protect route with AuthGuard
   },
-  {
-    path: 'unverified',
-    component: UnverifiedPageComponent,
-  },
+  // {
+  //   path: 'unverified',
+  //   component: UnverifiedPageComponent,
+  // },
   {
     path: '**',
     redirectTo: '', // Default redirect to home
