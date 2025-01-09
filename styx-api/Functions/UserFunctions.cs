@@ -184,20 +184,55 @@ namespace Styx.Api.Functions
 
         [Function("UpdateUserProfile")]
         public async Task<HttpResponseData> UpdateUserProfile(
-            [HttpTrigger(AuthorizationLevel.Anonymous, "put", Route = "profile/{auth0UserId}")]
+            [HttpTrigger(AuthorizationLevel.Anonymous, "put", Route = "profile")]
                 AzureHttpRequestData req,
-            string auth0UserId,
             FunctionContext executionContext
         )
         {
             var logger = executionContext.GetLogger("UpdateUserProfile");
-            logger.LogInformation($"Updating profile for Auth0 User ID: {auth0UserId}");
+            logger.LogInformation("Updating user profile using token-based Auth0UserId.");
 
-            StyxUser existingUser = null;
-
+            // 1. Extract the token from the Authorization header
+            string token;
             try
             {
-                // Query to find the user by auth0UserId
+                token = Auth0TokenHelper.GetBearerToken(req);
+                // or your local method if not using a helper class
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                logger.LogError(ex.Message);
+                var authError = req.CreateResponse(HttpStatusCode.Unauthorized);
+                await authError.WriteStringAsync("Missing or invalid Authorization header.");
+                return authError;
+            }
+
+            // 2. Validate token and get sub (Auth0UserId)
+            string auth0UserId;
+            try
+            {
+                auth0UserId = await Auth0TokenHelper.ValidateTokenAndGetSub(token);
+                // or your local validation method
+            }
+            catch (SecurityTokenException ex)
+            {
+                logger.LogError($"Token validation failed: {ex.Message}");
+                var invalidToken = req.CreateResponse(HttpStatusCode.Unauthorized);
+                await invalidToken.WriteStringAsync("Invalid token.");
+                return invalidToken;
+            }
+            catch (Exception ex)
+            {
+                logger.LogError($"Token validation error: {ex.Message}");
+                var tokenError = req.CreateResponse(HttpStatusCode.InternalServerError);
+                await tokenError.WriteStringAsync("Token validation error.");
+                return tokenError;
+            }
+
+            // 3. Query Cosmos DB for the existing user using auth0UserId
+            StyxUser existingUser = null;
+            try
+            {
                 var query = new QueryDefinition(
                     "SELECT * FROM c WHERE c.auth0UserId = @auth0UserId"
                 ).WithParameter("@auth0UserId", auth0UserId);
@@ -228,6 +263,7 @@ namespace Styx.Api.Functions
                 return req.CreateResponse(HttpStatusCode.InternalServerError);
             }
 
+            // 4. Deserialize the updated profile data from the request body
             var requestBody = await req.ReadAsStringAsync();
             var updatedProfile = JsonSerializer.Deserialize<StyxUser>(requestBody);
 
@@ -241,22 +277,23 @@ namespace Styx.Api.Functions
                 $"Updated profile data: {JsonSerializer.Serialize(updatedProfile)}"
             );
 
-            // Update properties if provided
+            // 5. Update the existing user with non-null fields from updatedProfile
             existingUser.Name = updatedProfile.Name ?? existingUser.Name;
             existingUser.AboutMe = updatedProfile.AboutMe ?? existingUser.AboutMe;
             existingUser.Habits = updatedProfile.Habits ?? existingUser.Habits;
 
             // Ensure the original id and auth0UserId are retained
-            existingUser.id = existingUser.id; // Ensure ID is retained
-            existingUser.auth0UserId = existingUser.auth0UserId; // Ensure Auth0 ID is retained
+            // (they're already set, so no changes needed unless you want to enforce them explicitly)
+            existingUser.id = existingUser.id;
+            existingUser.auth0UserId = existingUser.auth0UserId;
 
             logger.LogInformation(
                 $"Final user object for update: {JsonSerializer.Serialize(existingUser)}"
             );
 
+            // 6. Save changes to Cosmos DB
             try
             {
-                // Replace the item in the Cosmos DB container using the original existingUser.id, without a partition key
                 await _dbContext.UsersContainer.ReplaceItemAsync(existingUser, existingUser.id);
             }
             catch (CosmosException ex)
@@ -267,13 +304,9 @@ namespace Styx.Api.Functions
                 return req.CreateResponse(HttpStatusCode.InternalServerError);
             }
 
-            // Response creation
+            // 7. Return success response
             var response = req.CreateResponse(HttpStatusCode.OK);
-
-            // Create a JSON object for the response
             var responseBody = new { success = true, message = "Profile updated successfully." };
-
-            // Write the JSON response (automatically sets content type to application/json)
             await response.WriteAsJsonAsync(responseBody);
 
             return response;
@@ -281,24 +314,54 @@ namespace Styx.Api.Functions
 
         [Function("UpdateProfileMedia")]
         public async Task<HttpResponseData> UpdateProfileMedia(
-            [HttpTrigger(
-                AuthorizationLevel.Anonymous,
-                "put",
-                Route = "profile/media/{auth0UserId}"
-            )]
+            [HttpTrigger(AuthorizationLevel.Anonymous, "put", Route = "profile/media")]
                 AzureHttpRequestData req,
-            string auth0UserId,
             FunctionContext executionContext
         )
         {
-            var logger = executionContext.GetLogger("UpdatePostMedia");
-            logger.LogInformation($"Updating media for Profile ID: {auth0UserId}");
+            var logger = executionContext.GetLogger("UpdateProfileMedia");
+            logger.LogInformation("Updating media for user via token-based Auth0UserId.");
 
-            StyxUser existingUser = null;
-
+            // 1. Extract bearer token from Authorization header
+            string token;
             try
             {
-                // Query to find the post by postId
+                token = Auth0TokenHelper.GetBearerToken(req);
+                // or replace with your local method if you're not using a Helper class
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                logger.LogError(ex.Message);
+                var unauthorized = req.CreateResponse(HttpStatusCode.Unauthorized);
+                await unauthorized.WriteStringAsync("Missing or invalid Authorization header.");
+                return unauthorized;
+            }
+
+            // 2. Validate token and get 'sub' (the Auth0UserId)
+            string auth0UserId;
+            try
+            {
+                auth0UserId = await Auth0TokenHelper.ValidateTokenAndGetSub(token);
+            }
+            catch (SecurityTokenException ex)
+            {
+                logger.LogError($"Token validation failed: {ex.Message}");
+                var invalidToken = req.CreateResponse(HttpStatusCode.Unauthorized);
+                await invalidToken.WriteStringAsync("Invalid token.");
+                return invalidToken;
+            }
+            catch (Exception ex)
+            {
+                logger.LogError($"Token validation error: {ex.Message}");
+                var tokenError = req.CreateResponse(HttpStatusCode.InternalServerError);
+                await tokenError.WriteStringAsync("Token validation error.");
+                return tokenError;
+            }
+
+            // 3. Query Cosmos DB for this user by auth0UserId
+            StyxUser existingUser = null;
+            try
+            {
                 var query = new QueryDefinition(
                     "SELECT * FROM c WHERE c.auth0UserId = @auth0UserId"
                 ).WithParameter("@auth0UserId", auth0UserId);
@@ -329,128 +392,38 @@ namespace Styx.Api.Functions
                 return req.CreateResponse(HttpStatusCode.InternalServerError);
             }
 
-            // Parse request body to extract media URL
+            // 4. Parse request body to extract the photoUrl
             var requestBody = await req.ReadAsStringAsync();
             var payload = JsonSerializer.Deserialize<Dictionary<string, string>>(requestBody);
             if (
-                !payload.TryGetValue("photoUrl", out var photoUrl) || string.IsNullOrEmpty(photoUrl)
+                payload == null
+                || !payload.TryGetValue("photoUrl", out var photoUrl)
+                || string.IsNullOrEmpty(photoUrl)
             )
             {
-                logger.LogWarning("Media URL is missing in the request body.");
+                logger.LogWarning("photoUrl is missing in the request body.");
                 var badRequestResponse = req.CreateResponse(HttpStatusCode.BadRequest);
-                await badRequestResponse.WriteStringAsync("Media URL is required.");
+                await badRequestResponse.WriteStringAsync("photoUrl is required.");
                 return badRequestResponse;
             }
 
-            // Update the post's media URL
+            // 5. Update the user's PhotoUrl field
             existingUser.PhotoUrl = photoUrl;
 
+            // 6. Replace user in Cosmos DB
             try
             {
-                // Replace the item in the Cosmos DB container using the original existingPost.id
                 await _dbContext.UsersContainer.ReplaceItemAsync(existingUser, existingUser.id);
             }
             catch (CosmosException ex)
             {
                 logger.LogError(
-                    $"Error updating post media: {ex.Message}, Status Code: {ex.StatusCode}, ActivityId: {ex.ActivityId}"
+                    $"Error updating profile media: {ex.Message}, Status Code: {ex.StatusCode}, ActivityId: {ex.ActivityId}"
                 );
                 return req.CreateResponse(HttpStatusCode.InternalServerError);
             }
 
-            // Response creation
-            var response = req.CreateResponse(HttpStatusCode.OK);
-            var responseBody = new
-            {
-                success = true,
-                message = "Post media updated successfully.",
-                PhotoUrl = photoUrl,
-            };
-
-            await response.WriteAsJsonAsync(responseBody);
-            return response;
-        }
-
-        [Function("UpdateUserProfilePhoto")]
-        public async Task<HttpResponseData> UpdateUserProfilePhoto(
-            [HttpTrigger(
-                AuthorizationLevel.Anonymous,
-                "put",
-                Route = "profile/photo/{auth0UserId}"
-            )]
-                AzureHttpRequestData req,
-            string auth0UserId,
-            FunctionContext executionContext
-        )
-        {
-            var logger = executionContext.GetLogger("UpdateUserProfilePhoto");
-            logger.LogInformation($"Updating profile photo for Auth0 User ID: {auth0UserId}");
-
-            StyxUser existingUser = null;
-
-            try
-            {
-                // Query to find the user by auth0UserId
-                var query = new QueryDefinition(
-                    "SELECT * FROM c WHERE c.auth0UserId = @auth0UserId"
-                ).WithParameter("@auth0UserId", auth0UserId);
-
-                var queryResultSetIterator =
-                    _dbContext.UsersContainer.GetItemQueryIterator<StyxUser>(query);
-
-                if (queryResultSetIterator.HasMoreResults)
-                {
-                    var userResponse = await queryResultSetIterator.ReadNextAsync();
-                    existingUser = userResponse.FirstOrDefault();
-
-                    if (existingUser == null)
-                    {
-                        logger.LogWarning("User profile not found.");
-                        return req.CreateResponse(HttpStatusCode.NotFound);
-                    }
-                }
-            }
-            catch (CosmosException ex)
-            {
-                logger.LogError($"Cosmos DB error: {ex.Message}");
-                return req.CreateResponse(HttpStatusCode.InternalServerError);
-            }
-            catch (Exception ex)
-            {
-                logger.LogError($"Unexpected error: {ex.Message}");
-                return req.CreateResponse(HttpStatusCode.InternalServerError);
-            }
-
-            // Parse request body to extract photo URL
-            var requestBody = await req.ReadAsStringAsync();
-            var payload = JsonSerializer.Deserialize<Dictionary<string, string>>(requestBody);
-            if (
-                !payload.TryGetValue("photoUrl", out var photoUrl) || string.IsNullOrEmpty(photoUrl)
-            )
-            {
-                logger.LogWarning("Photo URL is missing in the request body.");
-                var badRequestResponse = req.CreateResponse(HttpStatusCode.BadRequest);
-                await badRequestResponse.WriteStringAsync("Photo URL is required.");
-                return badRequestResponse;
-            }
-
-            // Update the user's photo URL
-            existingUser.PhotoUrl = photoUrl;
-
-            try
-            {
-                // Replace the item in the Cosmos DB container using the original existingUser.id
-                await _dbContext.UsersContainer.ReplaceItemAsync(existingUser, existingUser.id);
-            }
-            catch (CosmosException ex)
-            {
-                logger.LogError(
-                    $"Error updating user profile photo: {ex.Message}, Status Code: {ex.StatusCode}, ActivityId: {ex.ActivityId}"
-                );
-                return req.CreateResponse(HttpStatusCode.InternalServerError);
-            }
-
-            // Response creation
+            // 7. Return success response
             var response = req.CreateResponse(HttpStatusCode.OK);
             var responseBody = new
             {
