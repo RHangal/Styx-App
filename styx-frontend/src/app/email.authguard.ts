@@ -2,6 +2,7 @@ import { Injectable } from '@angular/core';
 import { CanActivate, Router } from '@angular/router';
 import { EmailAuthService } from './email.authservice';
 
+//Authgaurd to check if user has verified their email
 @Injectable({
   providedIn: 'root',
 })
