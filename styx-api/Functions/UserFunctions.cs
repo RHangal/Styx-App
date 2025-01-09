@@ -423,7 +423,7 @@ namespace Styx.Api.Functions
                 return req.CreateResponse(HttpStatusCode.InternalServerError);
             }
 
-            // 7. Return success response for uploading photo
+            // 7. Return success response
             var response = req.CreateResponse(HttpStatusCode.OK);
             var responseBody = new
             {
