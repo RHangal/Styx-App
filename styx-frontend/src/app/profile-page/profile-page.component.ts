@@ -10,7 +10,7 @@ import { NavbarService } from '../navbar.service';
   standalone: true,
   imports: [CommonModule, FormsModule],
   templateUrl: './profile-page.component.html',
-  styleUrl: './profile-page.component.sass',
+  styleUrls: ['./profile-page.component.sass'],
 })
 export class ProfilePageComponent implements OnInit {
   profile: any = {};
@@ -24,75 +24,68 @@ export class ProfilePageComponent implements OnInit {
   constructor(
     private profileService: ProfileService,
     public auth: AuthService,
-    private navbarService: NavbarService // Inject the shared service
+    private navbarService: NavbarService // Shared service for navbar refresh
   ) {}
 
   ngOnInit(): void {
+    // Wait for the user object from Auth0
     this.auth.user$.subscribe((user) => {
-      if (user && user.sub) {
-        const auth0UserId = user.sub;
-        this.loadUserProfile(auth0UserId);
+      if (user) {
+        // If logged in, load the user profile from the backend
+        this.loadUserProfile();
       }
     });
   }
 
-  loadUserProfile(auth0UserId: string): void {
-    this.profileService.getUserProfile(auth0UserId).subscribe(
-      (data) => {
+  /**
+   * Loads the user profile by calling ProfileService.getUserProfile(),
+   * which uses the JWT token to derive the user ID (sub).
+   */
+  loadUserProfile(): void {
+    this.profileService.getUserProfile().subscribe({
+      next: (data) => {
         this.profile = data;
-
-        // Save name and email to localStorage for future use
+        // Save user info to local storage for future use
         this.saveUserProfileToLocalStorage(data);
         // Trigger navbar refresh on profile page load
         this.navbarService.triggerNavbarRefresh();
       },
-      (error) => {
-        console.error('Error fetching profile:', error);
-      }
-    );
+      error: (err) => {
+        console.error('Error fetching profile:', err);
+      },
+    });
   }
 
+  /**
+   * Saves certain profile fields to local storage
+   * (e.g., photo URL, name, email) if available.
+   */
   saveUserProfileToLocalStorage(profileData: any): void {
-    if (profileData && profileData.PhotoUrl) {
+    if (profileData?.PhotoUrl) {
       localStorage.setItem('pfp', profileData.PhotoUrl);
     }
-
-    // Only store the name and email, if not already in localStorage
-    if (profileData && profileData.Name) {
+    if (profileData?.Name) {
       localStorage.setItem('userName', profileData.Name);
     }
-
-    // Only store the email once, if it doesn't exist in localStorage already
-    if (
-      profileData &&
-      profileData.email &&
-      !localStorage.getItem('userEmail')
-    ) {
+    if (profileData?.email && !localStorage.getItem('userEmail')) {
       localStorage.setItem('userEmail', profileData.email);
     }
   }
 
+  /**
+   * Saves edits to the profile using the new token-based approach.
+   */
   saveProfile(): void {
     console.log('Attempting to save profile...');
-    this.auth.user$.subscribe({
-      next: (user) => {
-        if (user && user.sub) {
-          this.profileService
-            .updateUserProfile(user.sub, this.profile)
-            .subscribe({
-              next: (response) => {
-                console.log('Profile saved successfully:', response);
-                this.isEditing = false; // After saving, exit editing mode
-                this.saveUserProfileToLocalStorage(this.profile);
-              },
-              error: (error) => {
-                console.error('Error updating profile:', error);
-              },
-            });
-        }
+    this.isEditing = false; // Immediately exit editing mode (you can adjust the timing)
+    this.profileService.updateUserProfile(this.profile).subscribe({
+      next: (response) => {
+        console.log('Profile saved successfully:', response);
+        // Optionally reload or refresh local storage
+        this.saveUserProfileToLocalStorage(this.profile);
       },
       error: (error) => {
-        console.error('Error fetching user:', error);
+        console.error('Error updating profile:', error);
       },
     });
   }
@@ -100,6 +93,7 @@ export class ProfilePageComponent implements OnInit {
   showProfile(): void {
     this.showingProfile = true;
   }
+
   showBadges(): void {
     this.showingProfile = false;
   }
@@ -113,7 +107,9 @@ export class ProfilePageComponent implements OnInit {
     this.isEditingPhoto = !this.isEditingPhoto; // Toggle visibility
   }
 
-  // Handle file selection
+  /**
+   * Handle file selection for the profile photo upload.
+   */
   onFileSelected(event: Event): void {
     const input = event.target as HTMLInputElement;
     if (input.files && input.files.length > 0) {
@@ -121,35 +117,33 @@ export class ProfilePageComponent implements OnInit {
     }
   }
 
+  /**
+   * Uploads a new profile photo:
+   * 1) uploadNewProfilePhoto -> uploads the file, returns a URL,
+   * 2) updates the user's photo in DB,
+   * 3) refreshes the UI.
+   */
   uploadProfilePhoto(): void {
-    if (this.selectedFile) {
-      this.auth.user$.subscribe((user) => {
-        if (user && user.sub) {
-          const auth0UserId = user.sub;
-
-          if (this.selectedFile) {
-            this.isLoading = true;
-            this.profileService
-              .uploadNewProfilePhoto(auth0UserId, this.selectedFile)
-              .subscribe({
-                next: (response: any) => {
-                  this.isLoading = false;
-                  this.profilePhotoUrl = response.photoUrl; // Update the displayed photo URL
-                  this.isEditingPhoto = false; // Hide upload form after success
-                  this.loadUserProfile(auth0UserId);
-                  alert('Profile photo updated successfully!');
-                },
-                error: (error) => {
-                  this.isLoading = false;
-                  console.error('Error updating profile photo:', error);
-                  alert('Failed to update profile photo.');
-                },
-              });
-          }
-        }
-      });
-    } else {
+    if (!this.selectedFile) {
       alert('Please select a file to upload.');
+      return;
     }
+
+    this.isLoading = true; // Show loading indicator
+    this.profileService.uploadNewProfilePhoto(this.selectedFile).subscribe({
+      next: (response: any) => {
+        this.isLoading = false;
+        this.profilePhotoUrl = response.photoUrl; // Possibly the backend returns 'photoUrl'
+        this.isEditingPhoto = false; // Hide upload form after success
+        // Reload the user profile to get the new PhotoUrl
+        this.loadUserProfile();
+        alert('Profile photo updated successfully!');
+      },
+      error: (error) => {
+        this.isLoading = false;
+        console.error('Error updating profile photo:', error);
+        alert('Failed to update profile photo.');
+      },
+    });
   }
 }

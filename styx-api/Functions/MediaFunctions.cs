@@ -9,9 +9,12 @@ using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
+using Microsoft.IdentityModel.Tokens;
 using MimeDetective;
 using PostmarkDotNet;
 using Styx.Api.Data;
+using Styx.Api.Utils;
+using AzureHttpRequestData = Microsoft.Azure.Functions.Worker.Http.HttpRequestData;
 
 namespace Styx.Api.Functions
 {
@@ -52,15 +55,51 @@ namespace Styx.Api.Functions
         [Function("UploadMedia")]
         public static async Task<HttpResponseData> UploadMedia(
             [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "media/upload")]
-                HttpRequestData req
+                AzureHttpRequestData req
         )
         {
             var logger = req.FunctionContext.GetLogger("UploadMedia");
             logger.LogInformation("Processing media upload.");
 
+            // 1. Extract the bearer token from the Authorization header
+            string token;
+            try
+            {
+                token = Auth0TokenHelper.GetBearerToken(req);
+                // Or your local helper method if you're not using an Auth0TokenHelper class
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                logger.LogError(ex.Message);
+                var authError = req.CreateResponse(HttpStatusCode.Unauthorized);
+                await authError.WriteStringAsync("Missing or invalid Authorization header.");
+                return authError;
+            }
+
+            // 2. Validate token and retrieve the 'sub' (auth0UserId)
+            string auth0UserId;
+            try
+            {
+                auth0UserId = await Auth0TokenHelper.ValidateTokenAndGetSub(token);
+            }
+            catch (SecurityTokenException ex)
+            {
+                logger.LogError($"Token validation failed: {ex.Message}");
+                var invalidToken = req.CreateResponse(HttpStatusCode.Unauthorized);
+                await invalidToken.WriteStringAsync("Invalid token.");
+                return invalidToken;
+            }
+            catch (Exception ex)
+            {
+                logger.LogError($"Token validation error: {ex.Message}");
+                var tokenError = req.CreateResponse(HttpStatusCode.InternalServerError);
+                await tokenError.WriteStringAsync("Token validation error.");
+                return tokenError;
+            }
+
             using var stream = req.Body;
 
-            // Parse the form data
+            // 3. Parse the multipart form data (file + optional "profile" field)
             MultipartFormDataParser parser;
             try
             {
@@ -74,26 +113,12 @@ namespace Styx.Api.Functions
                 return badRequestResponse;
             }
 
-            // Log the Auth0UserId passed in the body (assuming it's passed as a part of the form data)
-            var auth0UserIdField = parser.Parameters.FirstOrDefault(f => f.Name == "auth0UserId");
-            if (auth0UserIdField == null)
-            {
-                logger.LogError("Auth0UserId is missing from the request.");
-                var badRequestResponse = req.CreateResponse(HttpStatusCode.BadRequest);
-                await badRequestResponse.WriteStringAsync("Auth0UserId is required.");
-                return badRequestResponse;
-            }
-
-            // Get the value of the form field
-            var auth0UserId = auth0UserIdField.Data;
-            logger.LogInformation($"Received Auth0UserId: {auth0UserId}");
-
-            // Get the optional profile field
+            // (Optional) "profile" field to determine if there's a subfolder
             var profileField = parser.Parameters.FirstOrDefault(f => f.Name == "profile");
-            string profile = profileField?.Data; // Null if not provided
+            string profile = profileField?.Data;
             logger.LogInformation($"Received profile: {profile}");
 
-            // Get the file
+            // 4. Ensure a file exists in the form data
             var file = parser.Files.FirstOrDefault();
             if (file == null)
             {
@@ -105,34 +130,35 @@ namespace Styx.Api.Functions
             var fileName = file.FileName;
             var fileStream = file.Data;
 
-            // Define blob storage details
+            // 5. Define blob storage details
+            // (assuming _blobServiceClient is a class-level or static field)
             var containerClient = _blobServiceClient.GetBlobContainerClient("media-files");
-
-            // Ensure the container exists
             await containerClient.CreateIfNotExistsAsync();
+            // Optionally set access policy
             // await containerClient.SetAccessPolicyAsync(PublicAccessType.Blob);
 
-
-            // Create the blob path with optional profile subfolder
+            // 6. Construct the blob path using auth0UserId and optional profile
             string blobPath = string.IsNullOrWhiteSpace(profile)
-                ? $"{auth0UserId}/{fileName}" // No profile, use only Auth0UserId
-                : $"{auth0UserId}/{profile}/{fileName}"; // Include profile as a subfolder
+                ? $"{auth0UserId}/{fileName}"
+                : $"{auth0UserId}/{profile}/{fileName}";
 
-            // Get MIME type dynamically using Mime-Detective
+            // 7. Detect MIME type using your existing GetMimeTypeFromStream(fileStream)
             string contentType = GetMimeTypeFromStream(fileStream);
 
-            // Ensure the stream position is set to 0 before uploading
+            // Reset file stream to the beginning before uploading
             fileStream.Position = 0;
-            // Upload the file
+
+            // 8. Upload the file to Blob Storage
             var blobClient = containerClient.GetBlobClient(blobPath);
             await blobClient.UploadAsync(
                 fileStream,
                 new BlobHttpHeaders { ContentType = contentType }
             );
 
-            // Return the response with the file URL
+            // 9. Return success response with file URL
             var response = req.CreateResponse(HttpStatusCode.OK);
             var fileUrl = blobClient.Uri.ToString();
+
             await response.WriteStringAsync(
                 JsonSerializer.Serialize(
                     new { message = "File uploaded successfully.", url = fileUrl }
