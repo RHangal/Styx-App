@@ -10,17 +10,16 @@ import { ActivatedRoute } from '@angular/router';
   standalone: true,
   imports: [CommonModule, FormsModule],
   templateUrl: './posts.component.html',
-  styleUrl: './posts.component.sass',
+  styleUrls: ['./posts.component.sass'],
 })
 export class PostsComponent implements OnInit {
-  postType: string | null = null; // Dynamically set post type (e.g., "dogs", "smoking")
+  postType: string | null = null; // e.g., "dogs", "smoking"
   posts: any[] = [];
   error: string | null = null;
   formData = {
     caption: '',
   };
   selectedMediaFile: File | null = null;
-  auth0UserId: string | null = null;
   commentText: string = ''; // For top-level comment
   replyText: string = ''; // For reply text
   replyingToCommentId: string | null = null; // Track which comment is being replied to
@@ -34,39 +33,50 @@ export class PostsComponent implements OnInit {
   ) {}
 
   ngOnInit(): void {
+    // 1) Get the postType from the route param
     this.postType = this.route.snapshot.paramMap.get('postType');
     this.fetchPosts(this.postType ?? 'defaultType');
+
+    // (Optional) We could track the logged-in user here, but
+    // we no longer pass 'auth0UserId' to the service calls.
     this.auth.user$.subscribe((user) => {
-      if (user && user.sub) {
-        this.auth0UserId = user.sub; // Save auth0UserId for later use
+      if (!user) {
+        console.log('User not logged in or user info not yet available.');
       }
     });
   }
 
+  /**
+   * Fetch posts by postType.
+   * The service doesn't need user info for this (unless your API requires a token).
+   */
   fetchPosts(postType: string): void {
-    this.postsService.getPostsByType(postType).subscribe(
-      (data) => {
+    this.postsService.getPostsByType(postType).subscribe({
+      next: (data) => {
         if (data === null) {
           this.posts = [];
           this.error = 'No posts available for the selected type.';
         } else {
           this.posts = data;
-          this.posts = this.posts.sort(
+          // Sort posts by descending CreatedAt
+          this.posts.sort(
             (a, b) =>
               new Date(b.CreatedAt).getTime() - new Date(a.CreatedAt).getTime()
           );
           this.error = null;
         }
       },
-      (err) => {
+      error: (err) => {
         console.error('Error fetching posts:', err);
         this.error = 'Failed to fetch posts. Please try again later.';
         this.posts = [];
-      }
-    );
+      },
+    });
   }
 
-  // Handle file selection
+  /**
+   * Handle file selection for creating a post with optional media
+   */
   onFileSelected(event: Event): void {
     const input = event.target as HTMLInputElement;
     if (input.files && input.files.length > 0) {
@@ -76,25 +86,21 @@ export class PostsComponent implements OnInit {
     }
   }
 
-  // Handle form submission
+  /**
+   * Create a new post (with or without media).
+   * The backend identifies the user from the token's sub claim.
+   */
   onSubmit(): void {
-    // Set static values and retrieve dynamic ones
-    if (!this.auth0UserId) {
-      alert('User ID not found. Please log in.');
-      return;
-    }
     const postType = this.postType ?? 'defaultType';
-    const name = localStorage.getItem('userName') || 'Anonymous'; // Fallback to 'Anonymous'
+    const name = localStorage.getItem('userName') || 'Anonymous';
     const email = localStorage.getItem('userEmail') || '';
 
     this.isLoading = true;
-    // Call the service to create the post
     this.postsService
       .createPostWithOptionalMedia(
         postType,
         name,
         email,
-        this.auth0UserId,
         this.formData.caption,
         this.selectedMediaFile || undefined
       )
@@ -103,22 +109,17 @@ export class PostsComponent implements OnInit {
           this.isLoading = false;
           console.log('Post created successfully:', response);
 
-          // Check if the response contains the success message for coins
-          if (
-            response.message &&
-            response.message.includes('500 coins rewarded successfully.')
-          ) {
-            // Show the alert that coins were rewarded
+          // If the backend returned a message about coins
+          if (response.message?.includes('500 coins rewarded successfully.')) {
             alert(
               `Congratulations! ${response.message} Your total coins: ${response.totalCoins}`
             );
           } else {
-            // Default post creation success alert
             alert('Post created!');
           }
 
           this.resetForm();
-          this.fetchPosts(this.postType ?? 'defaultType');
+          this.fetchPosts(postType);
         },
         error: (error) => {
           this.isLoading = false;
@@ -128,7 +129,9 @@ export class PostsComponent implements OnInit {
       });
   }
 
-  // Reset form after submission
+  /**
+   * Reset the post creation form after submission
+   */
   resetForm(): void {
     this.formData.caption = '';
     this.selectedMediaFile = null;
@@ -138,50 +141,39 @@ export class PostsComponent implements OnInit {
     }
   }
 
-  // Toggle comment form for a specific post
+  /**
+   * Toggle the comment form for a specific post
+   */
   toggleCommentForm(postId: string) {
     this.commentingOnPostId =
       this.commentingOnPostId === postId ? null : postId;
   }
 
-  // Toggle reply form for a specific comment
+  /**
+   * Toggle the reply form for a specific comment
+   */
   toggleReplyForm(commentId: string) {
     this.replyingToCommentId =
       this.replyingToCommentId === commentId ? null : commentId;
   }
 
-  // Add a comment or reply
+  /**
+   * Add a comment or reply
+   * The user ID is derived from the token on the backend.
+   */
   addComment(postId: string, postEmail: string, commentId?: string) {
-    const name = localStorage.getItem('userName');
-    const email = localStorage.getItem('userEmail');
-
-    if (!name || !email) {
-      alert('User information is missing. Please log in.');
-      return;
-    }
+    const name = localStorage.getItem('userName') || 'Anonymous';
+    const email = localStorage.getItem('userEmail') || '';
 
     const text = commentId ? this.replyText : this.commentText;
-
     if (!text.trim()) {
       alert('Comment text is required.');
       return;
     }
 
-    if (!this.auth0UserId) {
-      alert('User ID not found. Please log in.');
-      return;
-    }
-
+    // postsService.addComment no longer needs 'auth0UserId'
     this.postsService
-      .addComment(
-        postId,
-        this.auth0UserId,
-        text,
-        email,
-        postEmail,
-        name,
-        commentId || undefined
-      )
+      .addComment(postId, text, email, postEmail, name, commentId)
       .subscribe({
         next: () => {
           alert(
@@ -199,7 +191,9 @@ export class PostsComponent implements OnInit {
       });
   }
 
-  // Reset fields
+  /**
+   * Reset comment fields after submission
+   */
   resetCommentFields() {
     this.commentText = '';
     this.replyText = '';
@@ -207,66 +201,56 @@ export class PostsComponent implements OnInit {
     this.replyingToCommentId = null;
   }
 
-  //toggle like
+  /**
+   * Toggle a like for a post, comment, or reply.
+   * The user is identified from the token on the backend, no 'auth0UserId'.
+   */
   onToggleLike(postId: string, commentId?: string, replyId?: string): void {
-    if (!this.auth0UserId) {
-      alert('User not authenticated. Please log in.');
-      return;
-    }
-
-    this.postsService
-      .toggleLike(postId, this.auth0UserId, commentId, replyId)
-      .subscribe({
-        next: (response) => {
-          console.log('Like toggled successfully:', response);
-          this.fetchPosts(this.postType ?? 'defaultType'); // Refresh the posts to reflect the updated like counts.
-        },
-        error: (err) => {
-          console.error('Error toggling like:', err);
-          alert('Failed to toggle like.');
-        },
-      });
+    this.postsService.toggleLike(postId, commentId, replyId).subscribe({
+      next: (response) => {
+        console.log('Like toggled successfully:', response);
+        this.fetchPosts(this.postType ?? 'defaultType');
+      },
+      error: (err) => {
+        console.error('Error toggling like:', err);
+        alert('Failed to toggle like.');
+      },
+    });
   }
 
-  //delete posts
+  /**
+   * Delete a post
+   * The user is identified from the token's sub.
+   */
   deletePost(postId: string): void {
-    if (!this.auth0UserId) {
-      console.error('User is not authenticated.');
-      return;
-    }
-
     const confirmDelete = window.confirm(
       'Are you sure you want to delete this post?'
     );
-    if (!confirmDelete) {
-      return; // Exit if the user cancels
-    }
+    if (!confirmDelete) return;
 
-    this.postsService.deletePost(postId, this.auth0UserId).subscribe(
-      () => {
+    this.postsService.deletePost(postId).subscribe({
+      next: () => {
         console.log('Post deleted successfully.');
         this.fetchPosts(this.postType ?? 'defaultType');
       },
-      (error) => console.error('Error deleting post:', error)
-    );
+      error: (error) => {
+        console.error('Error deleting post:', error);
+      },
+    });
   }
 
+  /**
+   * Edit a comment or reply
+   */
   editComment(postId: string, commentId: string, replyId?: string): void {
-    if (!this.auth0UserId) {
-      console.error('User is not authenticated.');
-      return;
-    }
-
-    // Find the post, comment, and reply (if provided)
+    // Find the post & comment in the local array to prompt the user for new text
     const post = this.posts.find((p) => p.id === postId);
     if (!post) {
       console.error('Post not found.');
       return;
     }
 
-    const comment = post.Comments.find(
-      (c: { CommentId: string }) => c.CommentId === commentId
-    );
+    const comment = post.Comments?.find((c: any) => c.CommentId === commentId);
     if (!comment) {
       console.error('Comment not found.');
       return;
@@ -274,9 +258,7 @@ export class PostsComponent implements OnInit {
 
     let currentText = comment.Text;
     if (replyId) {
-      const reply = comment.Replies.find(
-        (r: { CommentId: string | undefined }) => r.CommentId === replyId
-      );
+      const reply = comment.Replies?.find((r: any) => r.CommentId === replyId);
       if (!reply) {
         console.error('Reply not found.');
         return;
@@ -284,46 +266,44 @@ export class PostsComponent implements OnInit {
       currentText = reply.Text;
     }
 
-    // Prompt with the current text for editing
     const newText = window.prompt('Edit your comment:', currentText);
     if (!newText || newText === currentText) {
       console.log('Edit canceled or no changes made.');
       return;
     }
 
-    // Prepare the request body
-
-    replyId = replyId || undefined;
-
+    // Now call the service
     this.postsService
-      .editComment(newText, postId, this.auth0UserId, commentId, replyId)
-      .subscribe(
-        () => {
+      .editComment(newText, postId, commentId, replyId)
+      .subscribe({
+        next: () => {
           console.log('Comment edited successfully.');
-          // Update the comment/reply locally in the UI
           this.fetchPosts(this.postType ?? 'defaultType');
         },
-        (error) => console.error('Error editing comment:', error)
-      );
+        error: (err) => {
+          console.error('Error editing comment:', err);
+        },
+      });
   }
 
+  /**
+   * Delete a comment or reply
+   */
   deleteComment(postId: string, commentId: string, replyId?: string): void {
-    if (!this.auth0UserId) {
-      console.error('User is not authenticated.');
-      return;
-    }
-    this.postsService
-      .deleteComment(postId, this.auth0UserId, commentId, replyId)
-      .subscribe(
-        () => {
-          console.log('Comment deleted successfully.');
-          // Update the comment/reply locally in the UI
-          this.fetchPosts(this.postType ?? 'defaultType');
-        },
-        (error) => console.error('Error deleting comment:', error)
-      );
+    this.postsService.deleteComment(postId, commentId, replyId).subscribe({
+      next: () => {
+        console.log('Comment deleted successfully.');
+        this.fetchPosts(this.postType ?? 'defaultType');
+      },
+      error: (err) => {
+        console.error('Error deleting comment:', err);
+      },
+    });
   }
 
+  /**
+   * Confirm delete comment
+   */
   confirmDeleteComment(postId: string, commentId: string): void {
     const confirmDelete = window.confirm(
       'Are you sure you want to delete this comment?'
@@ -333,6 +313,9 @@ export class PostsComponent implements OnInit {
     }
   }
 
+  /**
+   * Confirm delete reply
+   */
   confirmDeleteReply(postId: string, commentId: string, replyId: string): void {
     const confirmDelete = window.confirm(
       'Are you sure you want to delete this reply?'
@@ -342,8 +325,10 @@ export class PostsComponent implements OnInit {
     }
   }
 
+  /**
+   * Check if a URL points to an image
+   */
   isImage(url: string): boolean {
-    // Check file extensions for images
     const imageExtensions = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
     const fileExtension = url.split('.').pop()?.toLowerCase();
     return imageExtensions.includes(fileExtension || '');
