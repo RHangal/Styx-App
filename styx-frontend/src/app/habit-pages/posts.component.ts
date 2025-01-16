@@ -25,7 +25,7 @@ export class PostsComponent implements OnInit {
   replyingToCommentId: string | null = null; // Track which comment is being replied to
   commentingOnPostId: string | null = null;
   isLoading: boolean = false; // Flag to track loading state
-
+  auth0UserId: string | null = null;
   constructor(
     private postsService: PostsService,
     public auth: AuthService,
@@ -40,6 +40,9 @@ export class PostsComponent implements OnInit {
     // (Optional) We could track the logged-in user here, but
     // we no longer pass 'auth0UserId' to the service calls.
     this.auth.user$.subscribe((user) => {
+      if (user && user.sub) {
+        this.auth0UserId = user.sub; // Save auth0UserId for later use
+      }
       if (!user) {
         console.log('User not logged in or user info not yet available.');
       }

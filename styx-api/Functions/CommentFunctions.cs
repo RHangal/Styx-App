@@ -1,3 +1,5 @@
+using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using System.Text.Json;
@@ -6,9 +8,11 @@ using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
+using Microsoft.IdentityModel.Tokens;
 using PostmarkDotNet;
 using Styx.Api.Data;
 using Styx.Api.Models;
+using Styx.Api.Utils; // <-- Where your Auth0TokenHelper resides
 
 namespace Styx.Api.Functions
 {
@@ -21,6 +25,9 @@ namespace Styx.Api.Functions
             _dbContext = dbContext;
         }
 
+        // --------------------------------------------------
+        // Add a comment or reply
+        // --------------------------------------------------
         [Function("AddComment")]
         public async Task<HttpResponseData> AddComment(
             [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "posts/comments")]
@@ -29,18 +36,51 @@ namespace Styx.Api.Functions
         )
         {
             var logger = executionContext.GetLogger("AddComment");
-            logger.LogInformation("Processing comment/reply addition...");
+            logger.LogInformation("Processing comment/reply addition via token-based user ID.");
 
-            // Parse request body
+            // 1) Extract + validate JWT
+            string token;
+            try
+            {
+                token = Auth0TokenHelper.GetBearerToken(req);
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                logger.LogError($"Token extraction error: {ex.Message}");
+                var unauthorized = req.CreateResponse(HttpStatusCode.Unauthorized);
+                await unauthorized.WriteStringAsync("Missing or invalid Authorization header.");
+                return unauthorized;
+            }
+
+            string auth0UserId;
+            try
+            {
+                auth0UserId = await Auth0TokenHelper.ValidateTokenAndGetSub(token);
+            }
+            catch (SecurityTokenException ex)
+            {
+                logger.LogError($"Token validation failed: {ex.Message}");
+                var invalidToken = req.CreateResponse(HttpStatusCode.Unauthorized);
+                await invalidToken.WriteStringAsync("Invalid token.");
+                return null;
+            }
+            catch (Exception ex)
+            {
+                logger.LogError($"Token validation error: {ex.Message}");
+                var tokenError = req.CreateResponse(HttpStatusCode.InternalServerError);
+                await tokenError.WriteStringAsync("Token validation error.");
+                return null;
+            }
+
+            // 2) Parse request body
             var requestBody = await req.ReadAsStringAsync();
             var payload = JsonSerializer.Deserialize<Dictionary<string, string>>(requestBody);
 
-            // Validate required fields
+            // Validate required fields (except auth0UserId, which we have from the token)
             if (
-                !payload.TryGetValue("postId", out var postId)
+                payload == null
+                || !payload.TryGetValue("postId", out var postId)
                 || string.IsNullOrEmpty(postId)
-                || !payload.TryGetValue("auth0UserId", out var auth0UserId)
-                || string.IsNullOrEmpty(auth0UserId)
                 || !payload.TryGetValue("text", out var text)
                 || string.IsNullOrEmpty(text)
                 || !payload.TryGetValue("commenterEmail", out var commenterEmail)
@@ -52,18 +92,18 @@ namespace Styx.Api.Functions
             )
             {
                 logger.LogWarning(
-                    "Missing required fields: postId, auth0UserId, text, email, or name."
+                    "Missing required fields: postId, text, commenterEmail, postEmail, or name."
                 );
                 var badRequestResponse = req.CreateResponse(HttpStatusCode.BadRequest);
                 await badRequestResponse.WriteStringAsync(
-                    "postId, auth0UserId, and text are required."
+                    "Invalid payload. postId, text, commenterEmail, postEmail, and name are required."
                 );
                 return badRequestResponse;
             }
 
-            payload.TryGetValue("commentId", out var commentId); // Optional field
+            payload.TryGetValue("commentId", out var commentId); // optional, determines if top-level or reply
 
-            // Retrieve the post
+            // 3) Retrieve the post
             Post post;
             try
             {
@@ -88,16 +128,17 @@ namespace Styx.Api.Functions
                 return req.CreateResponse(HttpStatusCode.InternalServerError);
             }
 
-            // Handle top-level comment or reply logic
+            // 4) Add top-level comment or reply
             if (string.IsNullOrEmpty(commentId))
             {
-                // Add a new top-level comment
+                // top-level comment
                 var newComment = new Comment
                 {
                     CommentId = Guid.NewGuid().ToString(),
                     auth0UserId = auth0UserId,
                     Text = text,
                     Name = name,
+                    Email = commenterEmail, // you can store or omit
                     Replies = new List<Comment>(),
                     CreatedAt = DateTime.UtcNow,
                 };
@@ -105,7 +146,7 @@ namespace Styx.Api.Functions
             }
             else
             {
-                // Add a reply to an existing comment
+                // reply to an existing comment
                 var parentComment = post.Comments.FirstOrDefault(c => c.CommentId == commentId);
                 if (parentComment == null)
                 {
@@ -120,24 +161,24 @@ namespace Styx.Api.Functions
                     Text = text,
                     Name = name,
                     Email = commenterEmail,
-                    Replies = new List<Comment>(), // Replies to replies are not allowed
+                    Replies = new List<Comment>(), // no nested replies
                     CreatedAt = DateTime.UtcNow,
                 };
                 parentComment.Replies.Add(newReply);
             }
 
-            // Update the post in the database
+            // 5) Update the post in the DB
             try
             {
                 await _dbContext.PostsContainer.ReplaceItemAsync(post, post.id);
             }
             catch (Exception ex)
             {
-                logger.LogError($"Error updating post: {ex.Message}");
+                logger.LogError($"Error updating post (with comment): {ex.Message}");
                 return req.CreateResponse(HttpStatusCode.InternalServerError);
             }
 
-            // Create the success response
+            // 6) Return success
             var response = req.CreateResponse(HttpStatusCode.OK);
             await response.WriteAsJsonAsync(
                 new
@@ -148,11 +189,13 @@ namespace Styx.Api.Functions
                 }
             );
 
+            // Optionally send an email
             await SendEmailAsync(postEmail, text, name);
 
             return response;
         }
 
+        // For demonstration, you’re emailing the post owner, so no sub-based check here.
         public static async Task SendEmailAsync(
             string recipientEmail,
             string messageBody,
@@ -161,7 +204,6 @@ namespace Styx.Api.Functions
         {
             try
             {
-                // Create a new Postmark message
                 var message = new PostmarkMessage()
                 {
                     To = recipientEmail,
@@ -169,15 +211,12 @@ namespace Styx.Api.Functions
                     TrackOpens = true,
                     Subject = $"{recipientName} Replied to You!",
                     TextBody = messageBody,
-                    HtmlBody = $"<p>{messageBody} - {recipientName}</p>", // Wrap in HTML if needed
+                    HtmlBody = $"<p>{messageBody} - {recipientName}</p>",
                     MessageStream = "outbound",
                     Tag = "General Notification",
                 };
 
-                // Initialize Postmark client
-                var client = new PostmarkClient("88a7303c-126d-46d2-9f96-fda20cbfb8c4");
-
-                // Send the message asynchronously
+                var client = new PostmarkClient("YOUR-POSTMARK-SERVER-TOKEN");
                 var sendResult = await client.SendMessageAsync(message);
 
                 if (sendResult.Status == PostmarkStatus.Success)
@@ -195,6 +234,9 @@ namespace Styx.Api.Functions
             }
         }
 
+        // --------------------------------------------------
+        // Delete comment or reply
+        // --------------------------------------------------
         [Function("DeleteCommentOrReply")]
         public async Task<HttpResponseData> DeleteCommentOrReply(
             [HttpTrigger(AuthorizationLevel.Anonymous, "delete", Route = "posts/comments")]
@@ -203,106 +245,171 @@ namespace Styx.Api.Functions
         )
         {
             var logger = executionContext.GetLogger("DeleteCommentOrReply");
-            logger.LogInformation("Deleting comment/reply metadata...");
+            logger.LogInformation("Deleting comment/reply using token-based user ID...");
 
+            // 1) Extract + validate token
+            string token;
             try
             {
-                // Read request body and deserialize to get the details (postId, commentId, optional replyId, auth0UserId)
-                var requestBody = await req.ReadAsStringAsync();
-                var payload = JsonSerializer.Deserialize<Dictionary<string, string>>(requestBody);
+                token = Auth0TokenHelper.GetBearerToken(req);
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                logger.LogError($"Token extraction error: {ex.Message}");
+                var badAuth = req.CreateResponse(HttpStatusCode.Unauthorized);
+                await badAuth.WriteStringAsync("Missing or invalid Authorization header.");
+                return badAuth;
+            }
 
-                string postId = payload["postId"];
-                string commentId = payload["commentId"];
-                string? replyId = payload.ContainsKey("replyId") ? payload["replyId"] : null;
-                string auth0UserId = payload["auth0UserId"];
+            string auth0UserId;
+            try
+            {
+                auth0UserId = await Auth0TokenHelper.ValidateTokenAndGetSub(token);
+            }
+            catch (SecurityTokenException ex)
+            {
+                logger.LogError($"Token validation failed: {ex.Message}");
+                var invalidToken = req.CreateResponse(HttpStatusCode.Unauthorized);
+                await invalidToken.WriteStringAsync("Invalid token.");
+                return null;
+            }
+            catch (Exception ex)
+            {
+                logger.LogError($"Token validation error: {ex.Message}");
+                var tokenError = req.CreateResponse(HttpStatusCode.InternalServerError);
+                await tokenError.WriteStringAsync("Token validation error.");
+                return null;
+            }
 
-                // Query the post by its postId
+            // 2) Parse request for postId, commentId, optional replyId
+            string requestBody;
+            try
+            {
+                requestBody = await req.ReadAsStringAsync();
+            }
+            catch (Exception ex)
+            {
+                logger.LogError($"Error reading request body: {ex.Message}");
+                var badRequest = req.CreateResponse(HttpStatusCode.BadRequest);
+                await badRequest.WriteStringAsync("Invalid request body.");
+                return badRequest;
+            }
+
+            var payload = JsonSerializer.Deserialize<Dictionary<string, string>>(requestBody);
+            if (
+                payload == null
+                || !payload.TryGetValue("postId", out var postId)
+                || string.IsNullOrEmpty(postId)
+                || !payload.TryGetValue("commentId", out var commentId)
+                || string.IsNullOrEmpty(commentId)
+            )
+            {
+                var missingFields = req.CreateResponse(HttpStatusCode.BadRequest);
+                await missingFields.WriteStringAsync(
+                    "Missing required fields: postId or commentId."
+                );
+                return missingFields;
+            }
+            payload.TryGetValue("replyId", out var replyId); // optional
+
+            // 3) Retrieve the post
+            Post post;
+            try
+            {
                 var query = new QueryDefinition(
                     "SELECT * FROM c WHERE c.id = @postId"
                 ).WithParameter("@postId", postId);
 
-                var queryResultSetIterator = _dbContext.PostsContainer.GetItemQueryIterator<Post>(
-                    query
-                );
-                if (queryResultSetIterator.HasMoreResults)
+                var iterator = _dbContext.PostsContainer.GetItemQueryIterator<Post>(query);
+                if (iterator.HasMoreResults)
                 {
-                    var postResponse = await queryResultSetIterator.ReadNextAsync();
-                    var post = postResponse.FirstOrDefault();
+                    var postResponse = await iterator.ReadNextAsync();
+                    post = postResponse.FirstOrDefault();
 
                     if (post == null)
                     {
                         logger.LogWarning("Post not found.");
                         return req.CreateResponse(HttpStatusCode.NotFound);
                     }
-
-                    // Locate the comment or reply to delete based on commentId and optionally replyId
-                    var comment = post.Comments.FirstOrDefault(c => c.CommentId == commentId);
-
-                    if (comment == null)
-                    {
-                        logger.LogWarning("Comment not found.");
-                        return req.CreateResponse(HttpStatusCode.NotFound);
-                    }
-
-                    // Check if the replyId is provided
-                    if (replyId != null)
-                    {
-                        var reply = comment.Replies?.FirstOrDefault(r => r.CommentId == replyId);
-                        if (reply != null && reply.auth0UserId == auth0UserId)
-                        {
-                            // Delete reply metadata and set text to deleted
-                            reply.Text = "*this reply was deleted by the user*";
-                            reply.auth0UserId = null;
-                            reply.Email = null;
-                            reply.Name = "User";
-                        }
-                        else
-                        {
-                            return req.CreateResponse(HttpStatusCode.Unauthorized);
-                        }
-                    }
-                    else if (comment.auth0UserId == auth0UserId)
-                    {
-                        // Delete comment metadata and set text to deleted
-                        comment.Text = "*this comment was deleted by the user*";
-                        comment.auth0UserId = null;
-                        comment.Email = null;
-                        comment.Name = "User";
-                    }
-                    else
-                    {
-                        return req.CreateResponse(HttpStatusCode.Unauthorized);
-                    }
-
-                    // Replace the item in the Cosmos DB container
-                    await _dbContext.PostsContainer.ReplaceItemAsync(post, post.id);
-
-                    var response = req.CreateResponse(HttpStatusCode.OK);
-                    var responseBody = new
-                    {
-                        success = true,
-                        message = "Comment/reply deleted successfully.",
-                    };
-
-                    await response.WriteAsJsonAsync(responseBody);
-                    return response;
                 }
-
-                // Return a not found response if no post is found
-                return req.CreateResponse(HttpStatusCode.NotFound);
-            }
-            catch (CosmosException ex)
-            {
-                logger.LogError($"Cosmos DB error: {ex.Message}");
-                return req.CreateResponse(HttpStatusCode.InternalServerError);
+                else
+                {
+                    return req.CreateResponse(HttpStatusCode.NotFound);
+                }
             }
             catch (Exception ex)
             {
-                logger.LogError($"Unexpected error: {ex.Message}");
+                logger.LogError($"Error retrieving post: {ex.Message}");
                 return req.CreateResponse(HttpStatusCode.InternalServerError);
             }
+
+            // 4) Locate the comment or reply
+            var comment = post.Comments.FirstOrDefault(c => c.CommentId == commentId);
+            if (comment == null)
+            {
+                logger.LogWarning("Comment not found.");
+                return req.CreateResponse(HttpStatusCode.NotFound);
+            }
+
+            // If replyId is provided
+            if (!string.IsNullOrEmpty(replyId))
+            {
+                var reply = comment.Replies?.FirstOrDefault(r => r.CommentId == replyId);
+                if (reply == null)
+                {
+                    logger.LogWarning("Reply not found.");
+                    return req.CreateResponse(HttpStatusCode.NotFound);
+                }
+
+                // Check ownership
+                if (reply.auth0UserId != auth0UserId)
+                {
+                    return req.CreateResponse(HttpStatusCode.Unauthorized);
+                }
+
+                // "Delete" the reply by scrubbing data
+                reply.Text = "*this reply was deleted by the user*";
+                reply.auth0UserId = null;
+                reply.Email = null;
+                reply.Name = "User";
+            }
+            else
+            {
+                // top-level comment
+                if (comment.auth0UserId != auth0UserId)
+                {
+                    return req.CreateResponse(HttpStatusCode.Unauthorized);
+                }
+
+                // "Delete" the comment
+                comment.Text = "*this comment was deleted by the user*";
+                comment.auth0UserId = null;
+                comment.Email = null;
+                comment.Name = "User";
+            }
+
+            // 5) Replace item in Cosmos DB
+            try
+            {
+                await _dbContext.PostsContainer.ReplaceItemAsync(post, post.id);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError($"Error updating post: {ex.Message}");
+                return req.CreateResponse(HttpStatusCode.InternalServerError);
+            }
+
+            // 6) Return success
+            var successResponse = req.CreateResponse(HttpStatusCode.OK);
+            await successResponse.WriteAsJsonAsync(
+                new { success = true, message = "Comment/reply deleted successfully." }
+            );
+            return successResponse;
         }
 
+        // --------------------------------------------------
+        // Edit comment or reply
+        // --------------------------------------------------
         [Function("EditCommentOrReply")]
         public async Task<HttpResponseData> EditCommentOrReply(
             [HttpTrigger(AuthorizationLevel.Anonymous, "put", Route = "posts/comments")]
@@ -311,99 +418,149 @@ namespace Styx.Api.Functions
         )
         {
             var logger = executionContext.GetLogger("EditCommentOrReply");
-            logger.LogInformation("Editing comment/reply ...");
+            logger.LogInformation("Editing comment/reply using token-based user ID...");
 
+            // 1) Extract + validate token
+            string token;
             try
             {
-                // Read request body and deserialize to get the details (postId, commentId, optional replyId, auth0UserId)
-                var requestBody = await req.ReadAsStringAsync();
-                var payload = JsonSerializer.Deserialize<Dictionary<string, string>>(requestBody);
+                token = Auth0TokenHelper.GetBearerToken(req);
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                logger.LogError($"Token extraction error: {ex.Message}");
+                var noAuth = req.CreateResponse(HttpStatusCode.Unauthorized);
+                await noAuth.WriteStringAsync("Missing or invalid Authorization header.");
+                return noAuth;
+            }
 
-                string text = payload["text"];
-                string postId = payload["postId"];
-                string commentId = payload["commentId"];
-                string? replyId = payload.ContainsKey("replyId") ? payload["replyId"] : null;
-                string auth0UserId = payload["auth0UserId"];
+            string auth0UserId;
+            try
+            {
+                auth0UserId = await Auth0TokenHelper.ValidateTokenAndGetSub(token);
+            }
+            catch (SecurityTokenException ex)
+            {
+                logger.LogError($"Token validation failed: {ex.Message}");
+                var invalidToken = req.CreateResponse(HttpStatusCode.Unauthorized);
+                await invalidToken.WriteStringAsync("Invalid token.");
+                return null;
+            }
+            catch (Exception ex)
+            {
+                logger.LogError($"Token validation error: {ex.Message}");
+                var tokenError = req.CreateResponse(HttpStatusCode.InternalServerError);
+                await tokenError.WriteStringAsync("Token validation error.");
+                return null;
+            }
 
-                // Query the post by its postId
+            // 2) Parse the request body
+            var requestBody = await req.ReadAsStringAsync();
+            var payload = JsonSerializer.Deserialize<Dictionary<string, string>>(requestBody);
+
+            // Required fields
+            if (
+                payload == null
+                || !payload.TryGetValue("text", out var newText)
+                || string.IsNullOrEmpty(newText)
+                || !payload.TryGetValue("postId", out var postId)
+                || string.IsNullOrEmpty(postId)
+                || !payload.TryGetValue("commentId", out var commentId)
+                || string.IsNullOrEmpty(commentId)
+            )
+            {
+                var missingFields = req.CreateResponse(HttpStatusCode.BadRequest);
+                await missingFields.WriteStringAsync(
+                    "Missing required fields: text, postId, commentId."
+                );
+                return missingFields;
+            }
+            payload.TryGetValue("replyId", out var replyId);
+
+            // 3) Retrieve the post
+            Post post;
+            try
+            {
                 var query = new QueryDefinition(
                     "SELECT * FROM c WHERE c.id = @postId"
                 ).WithParameter("@postId", postId);
 
-                var queryResultSetIterator = _dbContext.PostsContainer.GetItemQueryIterator<Post>(
-                    query
-                );
-                if (queryResultSetIterator.HasMoreResults)
+                var iterator = _dbContext.PostsContainer.GetItemQueryIterator<Post>(query);
+                if (iterator.HasMoreResults)
                 {
-                    var postResponse = await queryResultSetIterator.ReadNextAsync();
-                    var post = postResponse.FirstOrDefault();
+                    var postResponse = await iterator.ReadNextAsync();
+                    post = postResponse.FirstOrDefault();
 
                     if (post == null)
                     {
                         logger.LogWarning("Post not found.");
                         return req.CreateResponse(HttpStatusCode.NotFound);
                     }
-
-                    // Locate the comment or reply to delete based on commentId and optionally replyId
-                    var comment = post.Comments.FirstOrDefault(c => c.CommentId == commentId);
-
-                    if (comment == null)
-                    {
-                        logger.LogWarning("Comment not found.");
-                        return req.CreateResponse(HttpStatusCode.NotFound);
-                    }
-
-                    // Check if the replyId is provided
-                    if (replyId != null)
-                    {
-                        var reply = comment.Replies?.FirstOrDefault(r => r.CommentId == replyId);
-                        if (reply != null && reply.auth0UserId == auth0UserId)
-                        {
-                            // Delete reply metadata and set text to deleted
-                            reply.Text = text + " (edited)";
-                        }
-                        else
-                        {
-                            return req.CreateResponse(HttpStatusCode.Unauthorized);
-                        }
-                    }
-                    else if (comment.auth0UserId == auth0UserId)
-                    {
-                        // Delete comment metadata and set text to deleted
-                        comment.Text = text + " (edited)";
-                    }
-                    else
-                    {
-                        return req.CreateResponse(HttpStatusCode.Unauthorized);
-                    }
-
-                    // Replace the item in the Cosmos DB container
-                    await _dbContext.PostsContainer.ReplaceItemAsync(post, post.id);
-
-                    var response = req.CreateResponse(HttpStatusCode.OK);
-                    var responseBody = new
-                    {
-                        success = true,
-                        message = "Comment/reply edited successfully.",
-                    };
-
-                    await response.WriteAsJsonAsync(responseBody);
-                    return response;
                 }
-
-                // Return a not found response if no post is found
-                return req.CreateResponse(HttpStatusCode.NotFound);
-            }
-            catch (CosmosException ex)
-            {
-                logger.LogError($"Cosmos DB error: {ex.Message}");
-                return req.CreateResponse(HttpStatusCode.InternalServerError);
+                else
+                {
+                    return req.CreateResponse(HttpStatusCode.NotFound);
+                }
             }
             catch (Exception ex)
             {
-                logger.LogError($"Unexpected error: {ex.Message}");
+                logger.LogError($"Error retrieving post: {ex.Message}");
                 return req.CreateResponse(HttpStatusCode.InternalServerError);
             }
+
+            // 4) Locate the comment
+            var comment = post.Comments.FirstOrDefault(c => c.CommentId == commentId);
+            if (comment == null)
+            {
+                logger.LogWarning("Comment not found.");
+                return req.CreateResponse(HttpStatusCode.NotFound);
+            }
+
+            if (!string.IsNullOrEmpty(replyId))
+            {
+                // edit a reply
+                var reply = comment.Replies?.FirstOrDefault(r => r.CommentId == replyId);
+                if (reply == null)
+                {
+                    logger.LogWarning("Reply not found.");
+                    return req.CreateResponse(HttpStatusCode.NotFound);
+                }
+
+                if (reply.auth0UserId != auth0UserId)
+                {
+                    return req.CreateResponse(HttpStatusCode.Unauthorized);
+                }
+
+                reply.Text = $"{newText} (edited)";
+            }
+            else
+            {
+                // edit the top-level comment
+                if (comment.auth0UserId != auth0UserId)
+                {
+                    return req.CreateResponse(HttpStatusCode.Unauthorized);
+                }
+
+                comment.Text = $"{newText} (edited)";
+            }
+
+            // 5) Update the post
+            try
+            {
+                await _dbContext.PostsContainer.ReplaceItemAsync(post, post.id);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError($"Error updating post: {ex.Message}");
+                return req.CreateResponse(HttpStatusCode.InternalServerError);
+            }
+
+            // 6) Return success
+            var success = req.CreateResponse(HttpStatusCode.OK);
+            await success.WriteAsJsonAsync(
+                new { success = true, message = "Comment/reply edited successfully." }
+            );
+            return success;
         }
     }
 }

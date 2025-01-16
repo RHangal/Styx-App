@@ -1,3 +1,5 @@
+using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using System.Text.Json;
@@ -6,8 +8,10 @@ using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
+using Microsoft.IdentityModel.Tokens;
 using Styx.Api.Data;
 using Styx.Api.Models;
+using Styx.Api.Utils; // <-- Contains Auth0TokenHelper, if that's your chosen namespace
 
 namespace Styx.Api.Functions
 {
@@ -28,25 +32,47 @@ namespace Styx.Api.Functions
         )
         {
             var logger = executionContext.GetLogger("RewardDailyCoins");
-            logger.LogInformation("Processing reward coins request...");
+            logger.LogInformation("Processing reward coins request via token-based user ID...");
 
+            // 1) Extract and validate the JWT to get auth0UserId
+            string token;
             try
             {
-                // Parse request body
-                var requestBody = await req.ReadAsStringAsync();
-                var payload = JsonSerializer.Deserialize<Dictionary<string, string>>(requestBody);
+                token = Auth0TokenHelper.GetBearerToken(req);
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                logger.LogError($"Token extraction error: {ex.Message}");
+                var missingAuthResponse = req.CreateResponse(HttpStatusCode.Unauthorized);
+                await missingAuthResponse.WriteStringAsync(
+                    "Missing or invalid Authorization header."
+                );
+                return missingAuthResponse;
+            }
 
-                if (
-                    !payload.TryGetValue("auth0UserId", out var auth0UserId)
-                    || string.IsNullOrEmpty(auth0UserId)
-                )
-                {
-                    logger.LogWarning("auth0UserId is required.");
-                    var badRequestResponse = req.CreateResponse(HttpStatusCode.BadRequest);
-                    await badRequestResponse.WriteStringAsync("auth0UserId is required.");
-                    return badRequestResponse;
-                }
+            string auth0UserId;
+            try
+            {
+                auth0UserId = await Auth0TokenHelper.ValidateTokenAndGetSub(token);
+            }
+            catch (SecurityTokenException ex)
+            {
+                logger.LogError($"Token validation failed: {ex.Message}");
+                var invalidToken = req.CreateResponse(HttpStatusCode.Unauthorized);
+                await invalidToken.WriteStringAsync("Invalid token.");
+                return invalidToken;
+            }
+            catch (Exception ex)
+            {
+                logger.LogError($"Token validation error: {ex.Message}");
+                var tokenError = req.CreateResponse(HttpStatusCode.InternalServerError);
+                await tokenError.WriteStringAsync("Token validation error.");
+                return tokenError;
+            }
 
+            // 2) Check whether the user has already created a post today
+            try
+            {
                 // Query posts for the given auth0UserId created today
                 var query = new QueryDefinition(
                     "SELECT VALUE COUNT(1) FROM c WHERE c.auth0UserId = @auth0UserId AND c.CreatedAt >= @today"
@@ -60,15 +86,18 @@ namespace Styx.Api.Functions
 
                 if (postCount != 1)
                 {
-                    logger.LogInformation($"User {auth0UserId} has already created a post today.");
-                    var response = req.CreateResponse(HttpStatusCode.OK);
-                    await response.WriteAsJsonAsync(
+                    // If the user either has 0 or more than 1 posts, we assume they've posted today.
+                    logger.LogInformation(
+                        $"User {auth0UserId} has already created a post today or none were found."
+                    );
+                    var alreadyPostedResponse = req.CreateResponse(HttpStatusCode.OK);
+                    await alreadyPostedResponse.WriteAsJsonAsync(
                         new { message = "No reward given. Post already exists for today." }
                     );
-                    return response;
+                    return alreadyPostedResponse;
                 }
 
-                // Query user profile
+                // 3) Fetch user profile to update coins
                 var userQuery = new QueryDefinition(
                     "SELECT * FROM c WHERE c.auth0UserId = @auth0UserId"
                 ).WithParameter("@auth0UserId", auth0UserId);
@@ -87,7 +116,7 @@ namespace Styx.Api.Functions
                     return notFoundResponse;
                 }
 
-                // Update user's coin balance
+                // 4) Update the user's coin balance
                 userProfile.Coins += 500;
 
                 // Replace the updated user profile in the database
@@ -97,7 +126,7 @@ namespace Styx.Api.Functions
                     $"User {auth0UserId} rewarded with 500 coins. Total coins: {userProfile.Coins}"
                 );
 
-                // Response
+                // 5) Return success
                 var successResponse = req.CreateResponse(HttpStatusCode.OK);
                 await successResponse.WriteAsJsonAsync(
                     new
@@ -109,6 +138,15 @@ namespace Styx.Api.Functions
                 );
 
                 return successResponse;
+            }
+            catch (CosmosException cex)
+            {
+                logger.LogError($"Cosmos DB error: {cex.Message}");
+                var cosmosError = req.CreateResponse(HttpStatusCode.InternalServerError);
+                await cosmosError.WriteStringAsync(
+                    "An error occurred while accessing the database."
+                );
+                return cosmosError;
             }
             catch (Exception ex)
             {

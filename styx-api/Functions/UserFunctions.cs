@@ -10,13 +10,10 @@ using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
-using Microsoft.IdentityModel.Protocols;
-using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using Microsoft.IdentityModel.Tokens;
 using Styx.Api.Data;
 using Styx.Api.Models;
 using Styx.Api.Utils;
-using AzureHttpRequestData = Microsoft.Azure.Functions.Worker.Http.HttpRequestData;
 
 namespace Styx.Api.Functions
 {
@@ -29,40 +26,11 @@ namespace Styx.Api.Functions
             _dbContext = dbContext;
         }
 
-        // ConfigurationManager automatically fetches and caches OIDC config and JWKS
-        private static readonly string Auth0Domain = Environment.GetEnvironmentVariable(
-            "AUTH0_DOMAIN"
-        );
-        private static readonly string Auth0Audience = Environment.GetEnvironmentVariable(
-            "AUTH0_AUDIENCE"
-        );
-
-        // Lazy-initialized OIDC config manager
-        private static readonly ConfigurationManager<OpenIdConnectConfiguration> _configurationManager;
-
-        static UserFunctions()
-        {
-            if (string.IsNullOrEmpty(Auth0Domain) || string.IsNullOrEmpty(Auth0Audience))
-            {
-                throw new InvalidOperationException("AUTH0_DOMAIN or AUTH0_AUDIENCE not set.");
-            }
-
-            // The well-known OpenID configuration endpoint for Auth0:
-            // e.g. https://my-tenant.us.auth0.com/.well-known/openid-configuration
-            var wellKnownEndpoint = $"https://{Auth0Domain}/.well-known/openid-configuration";
-
-            _configurationManager = new ConfigurationManager<OpenIdConnectConfiguration>(
-                wellKnownEndpoint,
-                new OpenIdConnectConfigurationRetriever(),
-                new HttpDocumentRetriever()
-            );
-        }
-
         [Function("RegisterUser")]
         [CosmosDBOutput("my-database", "users", Connection = "CosmosDbConnectionSetting")]
         public async Task<StyxUser> RegisterUser(
             [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "register")]
-                AzureHttpRequestData req,
+                HttpRequestData req,
             FunctionContext executionContext
         )
         {
@@ -106,7 +74,7 @@ namespace Styx.Api.Functions
         [Function("GetUserProfile")]
         public async Task<HttpResponseData> GetUserProfile(
             [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "profile")]
-                AzureHttpRequestData req,
+                HttpRequestData req,
             FunctionContext executionContext
         )
         {
@@ -185,7 +153,7 @@ namespace Styx.Api.Functions
         [Function("UpdateUserProfile")]
         public async Task<HttpResponseData> UpdateUserProfile(
             [HttpTrigger(AuthorizationLevel.Anonymous, "put", Route = "profile")]
-                AzureHttpRequestData req,
+                HttpRequestData req,
             FunctionContext executionContext
         )
         {
@@ -315,7 +283,7 @@ namespace Styx.Api.Functions
         [Function("UpdateProfileMedia")]
         public async Task<HttpResponseData> UpdateProfileMedia(
             [HttpTrigger(AuthorizationLevel.Anonymous, "put", Route = "profile/media")]
-                AzureHttpRequestData req,
+                HttpRequestData req,
             FunctionContext executionContext
         )
         {

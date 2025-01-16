@@ -14,7 +14,6 @@ using MimeDetective;
 using PostmarkDotNet;
 using Styx.Api.Data;
 using Styx.Api.Utils;
-using AzureHttpRequestData = Microsoft.Azure.Functions.Worker.Http.HttpRequestData;
 
 namespace Styx.Api.Functions
 {
@@ -55,7 +54,7 @@ namespace Styx.Api.Functions
         [Function("UploadMedia")]
         public static async Task<HttpResponseData> UploadMedia(
             [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "media/upload")]
-                AzureHttpRequestData req
+                HttpRequestData req
         )
         {
             var logger = req.FunctionContext.GetLogger("UploadMedia");
