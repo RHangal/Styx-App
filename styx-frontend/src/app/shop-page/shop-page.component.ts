@@ -59,11 +59,6 @@ export class ShopPageComponent implements OnInit {
   }
   // Purchase a badge
   purchaseBadge(value: number, imageUrl: string): void {
-    if (!this.auth0UserId) {
-      alert('User ID not found. Please log in.');
-      return;
-    }
-
     const confirmPurchase = window.confirm(
       `${value} coins will be spent, please confirm`
     );
@@ -72,31 +67,25 @@ export class ShopPageComponent implements OnInit {
     }
 
     console.log('Value being sent to the backend: ', value);
-    this.shopService
-      .purchaseBadges(this.auth0UserId, value, imageUrl)
-      .subscribe({
-        next: (response) => {
-          console.log(response);
-          if (response.Error) {
-            alert(response.Error);
-          } else {
-            alert(response.Message);
-            this.loadUserProfile();
-            this.fetchBadges(); // Refresh badges list
-          }
-        },
-        error: (err) => {
-          alert('Failed to purchase badge. Please try again.');
-        },
-      });
+    this.shopService.purchaseBadges(value, imageUrl).subscribe({
+      next: (response) => {
+        console.log(response);
+        if (response.Error) {
+          alert(response.Error);
+        } else {
+          alert(response.Message);
+          this.loadUserProfile();
+          this.fetchBadges(); // Refresh badges list
+        }
+      },
+      error: (err) => {
+        alert('Failed to purchase badge. Please try again.');
+      },
+    });
   }
 
   loadUserProfile(): void {
-    if (!this.auth0UserId) {
-      console.error('User is not authenticated.');
-      return;
-    }
-    this.shopService.getUserProfile(this.auth0UserId).subscribe(
+    this.shopService.getUserProfile().subscribe(
       (data) => {
         this.userCoins = data.Coins;
       },
